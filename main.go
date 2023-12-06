@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type apiConfig struct {
@@ -22,24 +24,25 @@ func main() {
 	apiConfig := apiConfig{
 		fileServerHits: 0,
 	}
+	r := chi.NewRouter()
 	// Create a new ServeMux
-	mux := http.NewServeMux()
 	handler := apiConfig.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir("."))))
 
-	mux.Handle("/app/", handler)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/app", handler)
+	r.Get("/app/*", handler)
+	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(http.StatusText(http.StatusOK)))
 	})
-	mux.HandleFunc("/metrics/", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/metrics/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Add("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "Hits: %d", apiConfig.fileServerHits)
 	})
-	mux.HandleFunc("/reset/", apiConfig.handlerReset)
+	r.Get("/reset/", apiConfig.handlerReset)
 	// Wrp the mux in a custom middleware for CORS
-	corsMux := addCorsHeaders(mux)
+	corsMux := addCorsHeaders(r)
 
 	// Create a new HTTP server with the corsMux as the handler
 	server := &http.Server{
@@ -54,7 +57,7 @@ func main() {
 	}
 }
 
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileServerHits = cfg.fileServerHits + 1
 		next.ServeHTTP(w, r)

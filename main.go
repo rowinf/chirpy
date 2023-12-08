@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -25,22 +27,71 @@ func main() {
 		fileServerHits: 0,
 	}
 	r := chi.NewRouter()
+	api := chi.NewRouter()
+	admin := chi.NewRouter()
 	// Create a new ServeMux
 	handler := apiConfig.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir("."))))
 
 	r.Get("/app", handler)
 	r.Get("/app/*", handler)
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	api.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(http.StatusText(http.StatusOK)))
 	})
-	r.Get("/metrics/", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+	api.Post("/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Body string `json:"body"`
+		}
+		type returnVals struct {
+			Valid bool `json:"valid"`
+		}
+		type errorBody struct {
+			Error string `json:"error"`
+		}
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			log.Printf("error decoding parameters %s", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fmt.Printf("params.Body %s length: %d\n", params.Body, len(params.Body))
+		if len(string(params.Body)) > 140 {
+			w.WriteHeader(http.StatusBadRequest)
+
+			errBody := errorBody{
+				Error: "Something went wrong",
+			}
+			dat, err := json.Marshal(errBody)
+			if err != nil {
+				log.Printf("Error marshalling JSON: %s", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Write(dat)
+			return
+		}
+
+		respBody := returnVals{
+			Valid: true,
+		}
+		dat, err := json.Marshal(respBody)
+		if err != nil {
+			log.Printf("Error marshalling JSON: %s", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "Hits: %d", apiConfig.fileServerHits)
+		w.Write(dat)
 	})
-	r.Get("/reset/", apiConfig.handlerReset)
+	admin.Get("/metrics", adminMetrics(&apiConfig))
+	admin.Get("/metrics/", adminMetrics(&apiConfig))
+	admin.Get("/reset", apiConfig.handlerReset)
+	r.Mount("/api", api)
+	r.Mount("/admin", admin)
 	// Wrp the mux in a custom middleware for CORS
 	corsMux := addCorsHeaders(r)
 
@@ -55,6 +106,18 @@ func main() {
 	if err := server.ListenAndServe(); err != nil {
 		panic(err)
 	}
+}
+
+func adminMetrics(apiConfig *apiConfig) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		content, err := os.ReadFile("./admin/index.html")
+		if err != nil {
+			http.Error(w, "missing index.html", http.StatusInternalServerError)
+		}
+		htmlContent := fmt.Sprintf(string(content), apiConfig.fileServerHits)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(htmlContent))
+	})
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.HandlerFunc {

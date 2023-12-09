@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -18,6 +19,44 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	cfg.fileServerHits = 0
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Hits reset to 0"))
+}
+
+func respondWithError(w http.ResponseWriter, code int, message string) {
+	type errorBody struct {
+		Error string `json:"error"`
+	}
+
+	errBody := errorBody{
+		Error: message,
+	}
+	dat, err := json.Marshal(errBody)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(code)
+	w.Write(dat)
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(dat)
+}
+
+func CensorString(s string) string {
+	censorship := []byte("****")
+	bytes := []byte(s)
+	re := regexp.MustCompile("(?i)kerfuffle|sharbert|fornax")
+	val := re.ReplaceAll(bytes, censorship)
+	return string(val)
 }
 
 func main() {
@@ -44,48 +83,25 @@ func main() {
 			Body string `json:"body"`
 		}
 		type returnVals struct {
-			Valid bool `json:"valid"`
-		}
-		type errorBody struct {
-			Error string `json:"error"`
+			CleanedBody string `json:"cleaned_body"`
 		}
 		decoder := json.NewDecoder(r.Body)
 		params := parameters{}
 		err := decoder.Decode(&params)
 		if err != nil {
 			log.Printf("error decoding parameters %s", err)
-			w.WriteHeader(http.StatusInternalServerError)
+			respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
-		fmt.Printf("params.Body %s length: %d\n", params.Body, len(params.Body))
 		if len(string(params.Body)) > 140 {
-			w.WriteHeader(http.StatusBadRequest)
-
-			errBody := errorBody{
-				Error: "Something went wrong",
-			}
-			dat, err := json.Marshal(errBody)
-			if err != nil {
-				log.Printf("Error marshalling JSON: %s", err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			w.Write(dat)
+			respondWithError(w, http.StatusBadRequest, "chirp longer than 140 characters")
 			return
 		}
 
 		respBody := returnVals{
-			Valid: true,
+			CleanedBody: CensorString(params.Body),
 		}
-		dat, err := json.Marshal(respBody)
-		if err != nil {
-			log.Printf("Error marshalling JSON: %s", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(dat)
+		respondWithJSON(w, http.StatusOK, respBody)
 	})
 	admin.Get("/metrics", adminMetrics(&apiConfig))
 	admin.Get("/metrics/", adminMetrics(&apiConfig))

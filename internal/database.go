@@ -30,7 +30,9 @@ func NewDB(path string) (*DB, error) {
 }
 
 // CreateChirp creates a new chirp and saves it to disk
-func (db *DB) CreateChirp(body string) (Chirp, error)
+func (db *DB) CreateChirp(body string) (Chirp, error) {
+	err = json.Unmarshal(body, Chirp)
+}
 
 // GetChirps returns all chirps in the database
 func (db *DB) GetChirps() ([]Chirp, error) {
@@ -71,4 +73,11 @@ func (db *DB) loadDB() (DBStructure, error) {
 }
 
 // writeDB writes the database file to disk
-func (db *DB) writeDB(dbStructure DBStructure) error
+func (db *DB) writeDB(dbStructure DBStructure) error {
+	j, err := json.Marshal(dbStructure)
+	if err != nil {
+		panic("json error")
+	}
+	werr := os.WriteFile("./database.json", j, 0666)
+	return werr
+}

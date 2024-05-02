@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 )
@@ -13,8 +14,8 @@ type DB struct {
 }
 
 type Chirp struct {
-	id   int
-	body string
+	Id   int    `json:"id"`
+	Body string `json:"body"`
 }
 
 type DBStructure struct {
@@ -31,7 +32,17 @@ func NewDB(path string) (*DB, error) {
 
 // CreateChirp creates a new chirp and saves it to disk
 func (db *DB) CreateChirp(body string) (Chirp, error) {
-	err = json.Unmarshal(body, Chirp)
+	newChirp := Chirp{Body: body}
+	if dbStructure, err := db.loadDB(); err == nil {
+		newChirp.Id = len(dbStructure.Chirps)
+		dbStructure.Chirps[len(dbStructure.Chirps)] = newChirp
+		if werr := db.writeDB(dbStructure); werr == nil {
+			return newChirp, nil
+		} else {
+			return newChirp, werr
+		}
+	}
+	return newChirp, nil
 }
 
 // GetChirps returns all chirps in the database
@@ -60,7 +71,7 @@ func (db *DB) ensureDB() error {
 
 // loadDB reads the database file into memory
 func (db *DB) loadDB() (DBStructure, error) {
-	bytes, err := os.ReadFile("./database.json")
+	bytes, err := os.ReadFile(db.path)
 	if err != nil {
 		chirps := DBStructure{Chirps: make(map[int]Chirp)}
 		err := json.Unmarshal(bytes, &chirps)
@@ -69,6 +80,7 @@ func (db *DB) loadDB() (DBStructure, error) {
 		}
 		return chirps, nil
 	}
+	fmt.Printf("log.Logger: %v\n", bytes)
 	return DBStructure{Chirps: make(map[int]Chirp)}, errors.New("couldnt load json")
 }
 
@@ -78,6 +90,6 @@ func (db *DB) writeDB(dbStructure DBStructure) error {
 	if err != nil {
 		panic("json error")
 	}
-	werr := os.WriteFile("./database.json", j, 0666)
+	werr := os.WriteFile(db.path, j, 0666)
 	return werr
 }

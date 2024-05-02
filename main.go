@@ -9,6 +9,7 @@ import (
 	"regexp"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rowinf/chirpy/internal"
 )
 
 type apiConfig struct {
@@ -59,6 +60,37 @@ func CensorString(s string) string {
 	return string(val)
 }
 
+func createChirp(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+	}
+	type returnVals struct {
+		CleanedBody string `json:"cleaned_body"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	body := CensorString(string(params.Body))
+	if err != nil {
+		log.Printf("error decoding parameters %s", err)
+		respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	if len(body) > 140 {
+		respondWithError(w, http.StatusBadRequest, "chirp longer than 140 characters")
+		return
+	}
+	db, err := internal.NewDB("./database/database.json")
+	if err != nil {
+		panic("error database")
+	}
+	if chirp, err := db.CreateChirp(body); err == nil {
+		respondWithJSON(w, http.StatusOK, chirp)
+	} else {
+		respondWithError(w, 400, "unprocessable chirp")
+	}
+}
+
 func main() {
 	port := "8080"
 
@@ -78,31 +110,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(http.StatusText(http.StatusOK)))
 	})
-	api.Post("/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
-		type parameters struct {
-			Body string `json:"body"`
-		}
-		type returnVals struct {
-			CleanedBody string `json:"cleaned_body"`
-		}
-		decoder := json.NewDecoder(r.Body)
-		params := parameters{}
-		err := decoder.Decode(&params)
-		if err != nil {
-			log.Printf("error decoding parameters %s", err)
-			respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
-			return
-		}
-		if len(string(params.Body)) > 140 {
-			respondWithError(w, http.StatusBadRequest, "chirp longer than 140 characters")
-			return
-		}
-
-		respBody := returnVals{
-			CleanedBody: CensorString(params.Body),
-		}
-		respondWithJSON(w, http.StatusOK, respBody)
-	})
+	api.Post("/chirps", createChirp)
 	admin.Get("/metrics", adminMetrics(&apiConfig))
 	admin.Get("/metrics/", adminMetrics(&apiConfig))
 	admin.Get("/reset", apiConfig.handlerReset)

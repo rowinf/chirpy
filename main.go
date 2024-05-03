@@ -80,7 +80,7 @@ func createChirp(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "chirp longer than 140 characters")
 		return
 	}
-	db, err := internal.NewDB("./database/database.json")
+	db, err := internal.NewDB("./database.json")
 	if err != nil {
 		panic("error database")
 	}

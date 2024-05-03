@@ -2,8 +2,6 @@ package internal
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"os"
 	"sync"
 )
@@ -32,15 +30,21 @@ func NewDB(path string) (*DB, error) {
 
 // CreateChirp creates a new chirp and saves it to disk
 func (db *DB) CreateChirp(body string) (Chirp, error) {
-	newChirp := Chirp{Body: body}
+	newChirp := Chirp{Body: body, Id: -1}
 	if dbStructure, err := db.loadDB(); err == nil {
-		newChirp.Id = len(dbStructure.Chirps)
-		dbStructure.Chirps[len(dbStructure.Chirps)] = newChirp
-		if werr := db.writeDB(dbStructure); werr == nil {
-			return newChirp, nil
-		} else {
-			return newChirp, werr
+		for i := range dbStructure.Chirps {
+			if _, ok := dbStructure.Chirps[i]; !ok {
+				newChirp.Id = i
+				break
+			}
 		}
+		if newChirp.Id == -1 {
+			newChirp.Id = len(dbStructure.Chirps) + 1
+		}
+
+		dbStructure.Chirps[newChirp.Id] = newChirp
+		werr := db.writeDB(dbStructure)
+		return newChirp, werr
 	}
 	return newChirp, nil
 }
@@ -48,21 +52,26 @@ func (db *DB) CreateChirp(body string) (Chirp, error) {
 // GetChirps returns all chirps in the database
 func (db *DB) GetChirps() ([]Chirp, error) {
 	data, err := db.loadDB()
-	if err != nil {
-		values := make([]Chirp, len(data.Chirps))
+	values := make([]Chirp, len(data.Chirps))
+	if err == nil {
+		i := 0
 		for _, val := range data.Chirps {
-			values = append(values, val)
+			values[i] = val
+			i++
 		}
 		return values, nil
 	}
-	return nil, errors.New("doh")
+	return values, nil
 }
 
 // ensureDB creates a new database file if it doesn't exist
 func (db *DB) ensureDB() error {
 	f, err := os.OpenFile(db.path, os.O_RDWR, 0755)
 	if err != nil {
-		os.Create(db.path)
+		_, cerr := os.Create(db.path)
+		if cerr != nil {
+			panic("couldnt create file")
+		}
 		return nil
 	}
 	f.Close()
@@ -72,16 +81,15 @@ func (db *DB) ensureDB() error {
 // loadDB reads the database file into memory
 func (db *DB) loadDB() (DBStructure, error) {
 	bytes, err := os.ReadFile(db.path)
-	if err != nil {
-		chirps := DBStructure{Chirps: make(map[int]Chirp)}
-		err := json.Unmarshal(bytes, &chirps)
-		if err != nil {
-			return DBStructure{Chirps: make(map[int]Chirp)}, errors.New("couldnt load json")
+	chirpsDb := DBStructure{Chirps: make(map[int]Chirp)}
+	if err == nil {
+		var uerr error
+		if len(bytes) > 0 {
+			uerr = json.Unmarshal(bytes, &chirpsDb)
 		}
-		return chirps, nil
+		return chirpsDb, uerr
 	}
-	fmt.Printf("log.Logger: %v\n", bytes)
-	return DBStructure{Chirps: make(map[int]Chirp)}, errors.New("couldnt load json")
+	return chirpsDb, err
 }
 
 // writeDB writes the database file to disk

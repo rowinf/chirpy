@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 
 	"github.com/rowinf/chirpy/internal"
 )
@@ -92,6 +93,7 @@ func getChirps(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic("error database")
 	}
+
 	if chirps, err := db.GetChirps(); err == nil {
 		respondWithJSON(w, http.StatusOK, chirps)
 	} else {
@@ -104,10 +106,13 @@ func getChirp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic("error database")
 	}
-	if chirps, err := db.GetChirps(); err == nil {
-		respondWithJSON(w, http.StatusOK, chirps)
+	chirpId, parseErr := strconv.Atoi(r.PathValue("chirpID"))
+	if parseErr != nil {
+		respondWithError(w, 404, "not found")
+	} else if chirp, err := db.GetChirp(chirpId); err == nil {
+		respondWithJSON(w, http.StatusOK, chirp)
 	} else {
-		respondWithError(w, 400, "unprocessable chirp")
+		respondWithError(w, 404, "not found")
 	}
 }
 
@@ -118,7 +123,6 @@ func main() {
 		fileServerHits: 0,
 	}
 	r := http.NewServeMux()
-	api := http.NewServeMux()
 	admin := http.NewServeMux()
 	// Create a new ServeMux
 	handler := apiConfig.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir("."))))
@@ -130,12 +134,12 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(http.StatusText(http.StatusOK)))
 	})
-	api.HandleFunc("POST /chirps", createChirp)
-	api.HandleFunc("/chirps", getChirps)
 	admin.HandleFunc("/metrics", adminMetrics(&apiConfig))
 	admin.HandleFunc("/metrics/", adminMetrics(&apiConfig))
 	admin.HandleFunc("/reset", apiConfig.handlerReset)
-	r.Handle("/api/", http.StripPrefix("/api", api))
+	r.HandleFunc("POST /api/chirps", createChirp)
+	r.HandleFunc("GET /api/chirps", getChirps)
+	r.HandleFunc("GET /api/chirps/{chirpID}", getChirp)
 	r.Handle("/admin/", http.StripPrefix("/app", admin))
 	// Wrp the mux in a custom middleware for CORS
 	corsMux := addCorsHeaders(r)

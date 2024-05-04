@@ -8,7 +8,6 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/rowinf/chirpy/internal"
 )
 
@@ -64,9 +63,6 @@ func createChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
 	}
-	type returnVals struct {
-		CleanedBody string `json:"cleaned_body"`
-	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
@@ -85,7 +81,31 @@ func createChirp(w http.ResponseWriter, r *http.Request) {
 		panic("error database")
 	}
 	if chirp, err := db.CreateChirp(body); err == nil {
-		respondWithJSON(w, http.StatusOK, chirp)
+		respondWithJSON(w, http.StatusCreated, chirp)
+	} else {
+		respondWithError(w, 400, "unprocessable chirp")
+	}
+}
+
+func getChirps(w http.ResponseWriter, r *http.Request) {
+	db, err := internal.NewDB("./database.json")
+	if err != nil {
+		panic("error database")
+	}
+	if chirps, err := db.GetChirps(); err == nil {
+		respondWithJSON(w, http.StatusOK, chirps)
+	} else {
+		respondWithError(w, 400, "unprocessable chirp")
+	}
+}
+
+func getChirp(w http.ResponseWriter, r *http.Request) {
+	db, err := internal.NewDB("./database.json")
+	if err != nil {
+		panic("error database")
+	}
+	if chirps, err := db.GetChirps(); err == nil {
+		respondWithJSON(w, http.StatusOK, chirps)
 	} else {
 		respondWithError(w, 400, "unprocessable chirp")
 	}
@@ -97,25 +117,26 @@ func main() {
 	apiConfig := apiConfig{
 		fileServerHits: 0,
 	}
-	r := chi.NewRouter()
-	api := chi.NewRouter()
-	admin := chi.NewRouter()
+	r := http.NewServeMux()
+	api := http.NewServeMux()
+	admin := http.NewServeMux()
 	// Create a new ServeMux
 	handler := apiConfig.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir("."))))
 
-	r.Get("/app", handler)
-	r.Get("/app/*", handler)
-	api.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	r.HandleFunc("/app", handler)
+	r.HandleFunc("/app/*", handler)
+	r.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(http.StatusText(http.StatusOK)))
 	})
-	api.Post("/chirps", createChirp)
-	admin.Get("/metrics", adminMetrics(&apiConfig))
-	admin.Get("/metrics/", adminMetrics(&apiConfig))
-	admin.Get("/reset", apiConfig.handlerReset)
-	r.Mount("/api", api)
-	r.Mount("/admin", admin)
+	api.HandleFunc("POST /chirps", createChirp)
+	api.HandleFunc("/chirps", getChirps)
+	admin.HandleFunc("/metrics", adminMetrics(&apiConfig))
+	admin.HandleFunc("/metrics/", adminMetrics(&apiConfig))
+	admin.HandleFunc("/reset", apiConfig.handlerReset)
+	r.Handle("/api/", http.StripPrefix("/api", api))
+	r.Handle("/admin/", http.StripPrefix("/app", admin))
 	// Wrp the mux in a custom middleware for CORS
 	corsMux := addCorsHeaders(r)
 

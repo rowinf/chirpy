@@ -2,6 +2,7 @@ package internal
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
 )
@@ -47,6 +48,21 @@ func (db *DB) CreateChirp(body string) (Chirp, error) {
 		return newChirp, werr
 	}
 	return newChirp, nil
+}
+
+// GetChirps returns all chirps in the database
+func (db *DB) GetChirp(chirpId int) (Chirp, error) {
+	data, err := db.loadDB()
+	chirp := Chirp{}
+	if err == nil {
+		for _, val := range data.Chirps {
+			if val.Id == chirpId {
+				return val, nil
+			}
+		}
+		return chirp, errors.New("not found")
+	}
+	return chirp, err
 }
 
 // GetChirps returns all chirps in the database

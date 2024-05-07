@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -116,8 +117,58 @@ func getChirp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type UserParams struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func createUser(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	params := UserParams{}
+	if err := decoder.Decode(&params); err != nil {
+		log.Printf("error decoding parameters %s", err)
+		respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	db, _ := internal.NewDB("./database.json")
+	user, err := db.CreateUser(params.Email, []byte(params.Password))
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "unprocessable user")
+	} else {
+		respondWithJSON(w, http.StatusCreated, user)
+	}
+}
+
+func userLogin(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	params := UserParams{}
+	if err := decoder.Decode(&params); err != nil {
+		log.Printf("error decoding parameters %s", err)
+		respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	db, _ := internal.NewDB("./database.json")
+	user, err := db.UserLogin(params.Email, []byte(params.Password))
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "unauthorized")
+	} else {
+		respondWithJSON(w, http.StatusOK, user)
+	}
+}
+
+var dbg bool
+
+func init() {
+	flag.BoolVar(&dbg, "debug", false, "Enable debug mode")
+}
+
 func main() {
+	flag.Parse()
 	port := "8080"
+	if dbg {
+		os.Remove("./database.json")
+	}
 
 	apiConfig := apiConfig{
 		fileServerHits: 0,
@@ -137,6 +188,8 @@ func main() {
 	admin.HandleFunc("/metrics", adminMetrics(&apiConfig))
 	admin.HandleFunc("/metrics/", adminMetrics(&apiConfig))
 	admin.HandleFunc("/reset", apiConfig.handlerReset)
+	r.HandleFunc("POST /api/login", userLogin)
+	r.HandleFunc("POST /api/users", createUser)
 	r.HandleFunc("POST /api/chirps", createChirp)
 	r.HandleFunc("GET /api/chirps", getChirps)
 	r.HandleFunc("GET /api/chirps/{chirpID}", getChirp)

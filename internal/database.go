@@ -28,6 +28,7 @@ type DBStructure struct {
 type User struct {
 	Email string `json:"email"`
 	Id    int    `json:"id"`
+	Token string `json:"token"`
 }
 
 // NewDB creates a new database connection

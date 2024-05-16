@@ -9,12 +9,16 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 	"github.com/rowinf/chirpy/internal"
 )
 
 type apiConfig struct {
 	fileServerHits int
+	jwtSecret      []byte
 }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
@@ -118,8 +122,9 @@ func getChirp(w http.ResponseWriter, r *http.Request) {
 }
 
 type UserParams struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	ExpiresInSeconds string `json:"expires_in_seconds"`
 }
 
 func createUser(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +145,7 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func userLogin(w http.ResponseWriter, r *http.Request) {
+func userLogin(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 	decoder := json.NewDecoder(r.Body)
 	params := UserParams{}
 	if err := decoder.Decode(&params); err != nil {
@@ -150,8 +155,19 @@ func userLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	db, _ := internal.NewDB("./database.json")
 	user, err := db.UserLogin(params.Email, []byte(params.Password))
+	claims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		Subject:   fmt.Sprint(user.Id),
+		Issuer:    "chirpy",
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	ss, serr := token.SignedString(ctx.jwtSecret)
+	user.Token = ss
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "unauthorized")
+	} else if serr != nil {
+		respondWithError(w, http.StatusInternalServerError, serr.Error())
 	} else {
 		respondWithJSON(w, http.StatusOK, user)
 	}
@@ -164,6 +180,7 @@ func init() {
 }
 
 func main() {
+	godotenv.Load()
 	flag.Parse()
 	port := "8080"
 	if dbg {
@@ -172,6 +189,7 @@ func main() {
 
 	apiConfig := apiConfig{
 		fileServerHits: 0,
+		jwtSecret:      []byte(os.Getenv("JWT_SECRET")),
 	}
 	r := http.NewServeMux()
 	admin := http.NewServeMux()
@@ -188,7 +206,9 @@ func main() {
 	admin.HandleFunc("/metrics", adminMetrics(&apiConfig))
 	admin.HandleFunc("/metrics/", adminMetrics(&apiConfig))
 	admin.HandleFunc("/reset", apiConfig.handlerReset)
-	r.HandleFunc("POST /api/login", userLogin)
+	r.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		userLogin(w, r, &apiConfig)
+	})
 	r.HandleFunc("POST /api/users", createUser)
 	r.HandleFunc("POST /api/chirps", createChirp)
 	r.HandleFunc("GET /api/chirps", getChirps)

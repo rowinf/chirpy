@@ -21,6 +21,12 @@ type apiConfig struct {
 	jwtSecret      []byte
 }
 
+type UserParams struct {
+	Email            string `json:"email"`
+	Password         string `json:"password"`
+	ExpiresInSeconds string `json:"expires_in_seconds"`
+}
+
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	cfg.fileServerHits = 0
 	w.WriteHeader(http.StatusOK)
@@ -121,10 +127,21 @@ func getChirp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type UserParams struct {
-	Email            string `json:"email"`
-	Password         string `json:"password"`
-	ExpiresInSeconds string `json:"expires_in_seconds"`
+func updateUser(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	params := UserParams{}
+	if err := decoder.Decode(&params); err != nil {
+		log.Printf("error decoding parameters %s", err)
+		respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	db, _ := internal.NewDB("./database.json")
+	user, err := db.UpdateUser(params.Email, []byte(params.Password))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "unprocessable user")
+	} else {
+		respondWithJSON(w, http.StatusOK, user)
+	}
 }
 
 func createUser(w http.ResponseWriter, r *http.Request) {
@@ -163,13 +180,21 @@ func userLogin(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	ss, serr := token.SignedString(ctx.jwtSecret)
-	user.Token = ss
+	payload := struct {
+		Id    int
+		Email string
+		Token string
+	}{
+		Id:    user.Id,
+		Email: user.Email,
+		Token: ss,
+	}
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "unauthorized")
 	} else if serr != nil {
 		respondWithError(w, http.StatusInternalServerError, serr.Error())
 	} else {
-		respondWithJSON(w, http.StatusOK, user)
+		respondWithJSON(w, http.StatusOK, payload)
 	}
 }
 
@@ -210,6 +235,7 @@ func main() {
 		userLogin(w, r, &apiConfig)
 	})
 	r.HandleFunc("POST /api/users", createUser)
+	r.HandleFunc("PUT /api/users", updateUser)
 	r.HandleFunc("POST /api/chirps", createChirp)
 	r.HandleFunc("GET /api/chirps", getChirps)
 	r.HandleFunc("GET /api/chirps/{chirpID}", getChirp)

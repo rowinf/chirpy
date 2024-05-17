@@ -28,7 +28,6 @@ type DBStructure struct {
 type User struct {
 	Email string `json:"email"`
 	Id    int    `json:"id"`
-	Token string `json:"token"`
 }
 
 // NewDB creates a new database connection
@@ -88,6 +87,29 @@ func (db *DB) GetChirps() ([]Chirp, error) {
 		return values, nil
 	}
 	return values, nil
+}
+
+func (db *DB) UpdateUser(email string, password []byte) (User, error) {
+	newUser := User{Email: email, Id: -1}
+	var erred error
+	if dbStructure, err := db.loadDB(); err == nil {
+		for i, user := range dbStructure.Users {
+			if email == user.Email {
+				newUser.Id = i
+				break
+			}
+		}
+		if newUser.Id == -1 {
+			erred = errors.New("not found")
+		} else if pw, pwerr := bcrypt.GenerateFromPassword(password, 10); pwerr == nil {
+			dbStructure.Passwords[newUser.Id] = pw
+		} else {
+			erred = pwerr
+		}
+	} else {
+		erred = err
+	}
+	return newUser, erred
 }
 
 func (db *DB) CreateUser(email string, password []byte) (User, error) {

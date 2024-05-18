@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -24,7 +26,11 @@ type apiConfig struct {
 type UserParams struct {
 	Email            string `json:"email"`
 	Password         string `json:"password"`
-	ExpiresInSeconds string `json:"expires_in_seconds"`
+	ExpiresInSeconds int    `json:"expires_in_seconds"`
+}
+
+type MyCustomClaims struct {
+	jwt.RegisteredClaims
 }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +133,15 @@ func getChirp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func updateUser(w http.ResponseWriter, r *http.Request) {
+func GetTokenFromAuthorizationHeader(header string) (string, error) {
+	const prefix = "Bearer "
+	if !strings.HasPrefix(header, prefix) {
+		return "", errors.New("unauthorized")
+	}
+	return strings.TrimSpace(strings.TrimPrefix(header, prefix)), nil
+}
+
+func updateUser(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 	decoder := json.NewDecoder(r.Body)
 	params := UserParams{}
 	if err := decoder.Decode(&params); err != nil {
@@ -135,12 +149,39 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	db, _ := internal.NewDB("./database.json")
-	user, err := db.UpdateUser(params.Email, []byte(params.Password))
+	claims := MyCustomClaims{}
+	authorization := r.Header.Get("Authorization")
+	headerToken, herr := GetTokenFromAuthorizationHeader(authorization)
+	if herr != nil {
+		respondWithError(w, http.StatusUnauthorized, herr.Error())
+		return
+	}
+	token, err := jwt.ParseWithClaims(headerToken, &claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("theres a problem with the signing method")
+		}
+		return ctx.jwtSecret, nil
+	})
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "unprocessable user")
+		respondWithError(w, http.StatusUnauthorized, "unauthorized")
+	} else if db, dberr := internal.NewDB("./database.json"); dberr == nil {
+		if token.Valid {
+			userId, converr := strconv.Atoi(claims.Subject)
+			if converr == nil {
+				user, err := db.UpdateUser(userId, params.Email, []byte(params.Password))
+				if err != nil {
+					respondWithError(w, http.StatusBadRequest, "unprocessable user")
+				} else {
+					respondWithJSON(w, http.StatusOK, user)
+				}
+			} else {
+				respondWithError(w, http.StatusBadRequest, "bad subject")
+			}
+		} else {
+			respondWithError(w, http.StatusUnauthorized, "invalid token")
+		}
 	} else {
-		respondWithJSON(w, http.StatusOK, user)
+		respondWithError(w, http.StatusBadRequest, dberr.Error())
 	}
 }
 
@@ -170,10 +211,14 @@ func userLogin(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 		respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	tokenExpiration := time.Now().Add(24 * time.Hour)
+	if params.ExpiresInSeconds > 0 {
+		tokenExpiration = time.Now().Add(time.Duration(params.ExpiresInSeconds))
+	}
 	db, _ := internal.NewDB("./database.json")
 	user, err := db.UserLogin(params.Email, []byte(params.Password))
 	claims := jwt.RegisteredClaims{
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		ExpiresAt: jwt.NewNumericDate(tokenExpiration),
 		Subject:   fmt.Sprint(user.Id),
 		Issuer:    "chirpy",
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -181,9 +226,9 @@ func userLogin(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	ss, serr := token.SignedString(ctx.jwtSecret)
 	payload := struct {
-		Id    int
-		Email string
-		Token string
+		Id    int    `json:"id"`
+		Email string `json:"email"`
+		Token string `json:"token"`
 	}{
 		Id:    user.Id,
 		Email: user.Email,
@@ -235,7 +280,9 @@ func main() {
 		userLogin(w, r, &apiConfig)
 	})
 	r.HandleFunc("POST /api/users", createUser)
-	r.HandleFunc("PUT /api/users", updateUser)
+	r.HandleFunc("PUT /api/users", func(w http.ResponseWriter, r *http.Request) {
+		updateUser(w, r, &apiConfig)
+	})
 	r.HandleFunc("POST /api/chirps", createChirp)
 	r.HandleFunc("GET /api/chirps", getChirps)
 	r.HandleFunc("GET /api/chirps/{chirpID}", getChirp)

@@ -89,22 +89,22 @@ func (db *DB) GetChirps() ([]Chirp, error) {
 	return values, nil
 }
 
-func (db *DB) UpdateUser(email string, password []byte) (User, error) {
-	newUser := User{Email: email, Id: -1}
+func (db *DB) UpdateUser(userId int, email string, password []byte) (User, error) {
+	newUser := User{Email: email, Id: userId}
 	var erred error
 	if dbStructure, err := db.loadDB(); err == nil {
-		for i, user := range dbStructure.Users {
-			if email == user.Email {
-				newUser.Id = i
-				break
-			}
-		}
-		if newUser.Id == -1 {
+		if user, ok := dbStructure.Users[userId]; !ok {
 			erred = errors.New("not found")
-		} else if pw, pwerr := bcrypt.GenerateFromPassword(password, 10); pwerr == nil {
-			dbStructure.Passwords[newUser.Id] = pw
 		} else {
-			erred = pwerr
+			if pw, pwerr := bcrypt.GenerateFromPassword(password, 10); pwerr == nil {
+				dbStructure.Passwords[user.Id] = pw
+			} else {
+				erred = pwerr
+			}
+			dbStructure.Users[user.Id] = newUser
+			if werr := db.writeDB(dbStructure); werr != nil {
+				erred = werr
+			}
 		}
 	} else {
 		erred = err

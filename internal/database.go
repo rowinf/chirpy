@@ -136,11 +136,10 @@ func (db *DB) CreateUser(email string, password []byte) (User, error) {
 }
 
 func (db *DB) UserLogin(email string, password []byte, refresh string) (User, error) {
-	user := User{}
 	if dbStructure, err := db.loadDB(); err == nil {
 		for i := range dbStructure.Users {
-			if val, ok := dbStructure.Users[i]; ok {
-				if val.Email == email {
+			if user, ok := dbStructure.Users[i]; ok {
+				if user.Email == email {
 					pw := dbStructure.Passwords[i]
 					err := bcrypt.CompareHashAndPassword(pw, password)
 					if err != nil {
@@ -148,24 +147,24 @@ func (db *DB) UserLogin(email string, password []byte, refresh string) (User, er
 					} else {
 						dbStructure.RefreshTokens[refresh] = user.Id
 						db.writeDB(dbStructure)
-						return val, nil
+						return user, nil
 					}
 				}
 			}
 		}
 	}
-	return user, errors.New("db error")
+	return User{}, errors.New("db error")
 }
 
 func (db *DB) UserFromRefresh(refresh string) (User, error) {
-	user := User{}
-	var err error
 	if dbStructure, err := db.loadDB(); err == nil {
 		if val, ok := dbStructure.RefreshTokens[refresh]; ok {
-			return dbStructure.Users[val], nil
+			if user, userHasToken := dbStructure.Users[val]; userHasToken {
+				return user, nil
+			}
 		}
 	}
-	return user, err
+	return User{}, errors.New("unauthorized")
 }
 
 func (db *DB) UserRevoke(refresh string) (bool, error) {
@@ -173,6 +172,8 @@ func (db *DB) UserRevoke(refresh string) (bool, error) {
 	if dbStructure, err := db.loadDB(); err == nil {
 		_, ok := dbStructure.RefreshTokens[refresh]
 		delete(dbStructure.RefreshTokens, refresh)
+
+		db.writeDB(dbStructure)
 		return ok, nil
 	}
 	return false, err

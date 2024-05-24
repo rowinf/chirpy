@@ -24,7 +24,7 @@ func AuthorizationHeader(header string) (string, error) {
 func CreateJwt(user *User, jwtSecret []byte, expiresInSeconds int) (string, error) {
 	tokenExpiration := time.Now().Add(24 * time.Hour)
 	if expiresInSeconds > 0 {
-		tokenExpiration = time.Now().Add(time.Duration(expiresInSeconds))
+		tokenExpiration = time.Now().Add(time.Duration(expiresInSeconds * int(time.Second)))
 	}
 	claims := jwt.RegisteredClaims{
 		ExpiresAt: jwt.NewNumericDate(tokenExpiration),

@@ -20,9 +20,10 @@ type Chirp struct {
 }
 
 type DBStructure struct {
-	Chirps    map[int]Chirp  `json:"chirps"`
-	Users     map[int]User   `json:"users"`
-	Passwords map[int][]byte `json:"passwords"`
+	Chirps        map[int]Chirp  `json:"chirps"`
+	Users         map[int]User   `json:"users"`
+	Passwords     map[int][]byte `json:"passwords"`
+	RefreshTokens map[string]int `json:"refresh_tokens"`
 }
 
 type User struct {
@@ -134,7 +135,7 @@ func (db *DB) CreateUser(email string, password []byte) (User, error) {
 	return newUser, nil
 }
 
-func (db *DB) UserLogin(email string, password []byte) (User, error) {
+func (db *DB) UserLogin(email string, password []byte, refresh string) (User, error) {
 	user := User{}
 	if dbStructure, err := db.loadDB(); err == nil {
 		for i := range dbStructure.Users {
@@ -145,6 +146,8 @@ func (db *DB) UserLogin(email string, password []byte) (User, error) {
 					if err != nil {
 						return user, err
 					} else {
+						dbStructure.RefreshTokens[refresh] = user.Id
+						db.writeDB(dbStructure)
 						return val, nil
 					}
 				}
@@ -152,6 +155,27 @@ func (db *DB) UserLogin(email string, password []byte) (User, error) {
 		}
 	}
 	return user, errors.New("db error")
+}
+
+func (db *DB) UserFromRefresh(refresh string) (User, error) {
+	user := User{}
+	var err error
+	if dbStructure, err := db.loadDB(); err == nil {
+		if val, ok := dbStructure.RefreshTokens[refresh]; ok {
+			return dbStructure.Users[val], nil
+		}
+	}
+	return user, err
+}
+
+func (db *DB) UserRevoke(refresh string) (bool, error) {
+	var err error
+	if dbStructure, err := db.loadDB(); err == nil {
+		_, ok := dbStructure.RefreshTokens[refresh]
+		delete(dbStructure.RefreshTokens, refresh)
+		return ok, nil
+	}
+	return false, err
 }
 
 // ensureDB creates a new database file if it doesn't exist
@@ -172,9 +196,10 @@ func (db *DB) ensureDB() error {
 func (db *DB) loadDB() (DBStructure, error) {
 	bytes, err := os.ReadFile(db.path)
 	chirpsDb := DBStructure{
-		Chirps:    make(map[int]Chirp),
-		Users:     make(map[int]User),
-		Passwords: make(map[int][]byte),
+		Chirps:        make(map[int]Chirp),
+		Users:         make(map[int]User),
+		Passwords:     make(map[int][]byte),
+		RefreshTokens: make(map[string]int),
 	}
 	if err == nil {
 		var uerr error

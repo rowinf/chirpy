@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
@@ -58,11 +59,15 @@ func respondWithError(w http.ResponseWriter, code int, message string) {
 }
 
 func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
-	dat, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("Error marshalling JSON: %s", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+	var dat []byte
+	var err error
+	if payload != nil {
+		dat, err = json.Marshal(payload)
+		if err != nil {
+			log.Printf("Error marshalling JSON: %s", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -203,6 +208,41 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func refreshToken(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
+	refresh, missing := internal.AuthorizationHeader(r.Header.Get("Authorization"))
+	if missing != nil {
+		respondWithError(w, http.StatusUnauthorized, missing.Error())
+		return
+	}
+	db, _ := internal.NewDB("./database.json")
+	if user, uerr := db.UserFromRefresh(refresh); uerr == nil {
+		ss, serr := internal.CreateJwt(&user, ctx.jwtSecret, 3600)
+		if serr == nil {
+			payload := struct {
+				Token string `json:"token"`
+			}{
+				Token: ss,
+			}
+			respondWithJSON(w, http.StatusOK, payload)
+		} else {
+			respondWithError(w, http.StatusUnauthorized, serr.Error())
+		}
+	} else {
+		respondWithError(w, http.StatusUnauthorized, uerr.Error())
+	}
+}
+
+func revokeToken(w http.ResponseWriter, r *http.Request) {
+	refresh, missing := internal.AuthorizationHeader(r.Header.Get("Authorization"))
+	if missing != nil {
+		respondWithError(w, http.StatusUnauthorized, missing.Error())
+		return
+	}
+	db, _ := internal.NewDB("./database.json")
+	db.UserRevoke(refresh)
+	respondWithJSON(w, http.StatusNoContent, nil)
+}
+
 func userLogin(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 	decoder := json.NewDecoder(r.Body)
 	params := UserParams{}
@@ -211,28 +251,22 @@ func userLogin(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 		respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	tokenExpiration := time.Now().Add(24 * time.Hour)
-	if params.ExpiresInSeconds > 0 {
-		tokenExpiration = time.Now().Add(time.Duration(params.ExpiresInSeconds))
-	}
 	db, _ := internal.NewDB("./database.json")
-	user, err := db.UserLogin(params.Email, []byte(params.Password))
-	claims := jwt.RegisteredClaims{
-		ExpiresAt: jwt.NewNumericDate(tokenExpiration),
-		Subject:   fmt.Sprint(user.Id),
-		Issuer:    "chirpy",
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	ss, serr := token.SignedString(ctx.jwtSecret)
+	randoms := make([]byte, 32)
+	rand.Read(randoms)
+	refresh := hex.EncodeToString(randoms)
+	user, err := db.UserLogin(params.Email, []byte(params.Password), refresh)
+	ss, serr := internal.CreateJwt(&user, ctx.jwtSecret, params.ExpiresInSeconds)
 	payload := struct {
-		Id    int    `json:"id"`
-		Email string `json:"email"`
-		Token string `json:"token"`
+		Id           int    `json:"id"`
+		Email        string `json:"email"`
+		Token        string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
 	}{
-		Id:    user.Id,
-		Email: user.Email,
-		Token: ss,
+		Id:           user.Id,
+		Email:        user.Email,
+		Token:        ss,
+		RefreshToken: refresh,
 	}
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "unauthorized")
@@ -280,6 +314,10 @@ func main() {
 		userLogin(w, r, &apiConfig)
 	})
 	r.HandleFunc("POST /api/users", createUser)
+	r.HandleFunc("POST /api/revoke", revokeToken)
+	r.HandleFunc("POST /api/refresh", func(w http.ResponseWriter, r *http.Request) {
+		refreshToken(w, r, &apiConfig)
+	})
 	r.HandleFunc("PUT /api/users", func(w http.ResponseWriter, r *http.Request) {
 		updateUser(w, r, &apiConfig)
 	})

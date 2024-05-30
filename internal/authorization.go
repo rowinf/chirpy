@@ -35,3 +35,13 @@ func CreateJwt(user *User, jwtSecret []byte, expiresInSeconds int) (string, erro
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret)
 }
+
+func ValidateToken(headerToken string, jwtSecret []byte, claims *MyCustomClaims) (*jwt.Token, error) {
+	token, err := jwt.ParseWithClaims(headerToken, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("theres a problem with the signing method")
+		}
+		return jwtSecret, nil
+	})
+	return token, err
+}

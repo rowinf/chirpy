@@ -15,8 +15,9 @@ type DB struct {
 }
 
 type Chirp struct {
-	Id   int    `json:"id"`
-	Body string `json:"body"`
+	Id       int    `json:"id"`
+	Body     string `json:"body"`
+	AuthorId int    `json:"author_id"`
 }
 
 type DBStructure struct {
@@ -40,8 +41,8 @@ func NewDB(path string) (*DB, error) {
 }
 
 // CreateChirp creates a new chirp and saves it to disk
-func (db *DB) CreateChirp(body string) (Chirp, error) {
-	newChirp := Chirp{Body: body, Id: -1}
+func (db *DB) CreateChirp(body string, author User) (Chirp, error) {
+	newChirp := Chirp{Body: body, Id: -1, AuthorId: author.Id}
 	if dbStructure, err := db.loadDB(); err == nil {
 		for i := range dbStructure.Chirps {
 			if _, ok := dbStructure.Chirps[i]; !ok {
@@ -60,7 +61,7 @@ func (db *DB) CreateChirp(body string) (Chirp, error) {
 	return newChirp, nil
 }
 
-// GetChirps returns all chirps in the database
+// GetChirp returns one chirp from the database
 func (db *DB) GetChirp(chirpId int) (Chirp, error) {
 	data, err := db.loadDB()
 	chirp := Chirp{}
@@ -73,6 +74,18 @@ func (db *DB) GetChirp(chirpId int) (Chirp, error) {
 		return chirp, errors.New("not found")
 	}
 	return chirp, err
+}
+
+func (db *DB) DeleteChirp(chirpId int, userId int) bool {
+	data, err := db.loadDB()
+	if err == nil {
+		chirp := data.Chirps[chirpId]
+		if chirp.AuthorId == userId {
+			delete(data.Chirps, chirpId)
+			return true
+		}
+	}
+	return false
 }
 
 // GetChirps returns all chirps in the database
@@ -88,6 +101,14 @@ func (db *DB) GetChirps() ([]Chirp, error) {
 		return values, nil
 	}
 	return values, nil
+}
+
+func (db *DB) GetUser(userId int) (User, error) {
+	if dbStructure, err := db.loadDB(); err == nil {
+		return dbStructure.Users[userId], nil
+	} else {
+		return User{}, errors.New("not found")
+	}
 }
 
 func (db *DB) UpdateUser(userId int, email string, password []byte) (User, error) {

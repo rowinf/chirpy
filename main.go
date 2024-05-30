@@ -74,6 +74,11 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Write(dat)
 }
 
+func respondWithNoContent(w http.ResponseWriter, code int) {
+	w.WriteHeader(code)
+	w.Write(nil)
+}
+
 func CensorString(s string) string {
 	censorship := []byte("****")
 	bytes := []byte(s)
@@ -82,7 +87,7 @@ func CensorString(s string) string {
 	return string(val)
 }
 
-func createChirp(w http.ResponseWriter, r *http.Request) {
+func createChirp(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 	type parameters struct {
 		Body string `json:"body"`
 	}
@@ -99,14 +104,29 @@ func createChirp(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "chirp longer than 140 characters")
 		return
 	}
-	db, err := internal.NewDB("./database.json")
-	if err != nil {
-		panic("error database")
+	claims := internal.MyCustomClaims{}
+	authorization := r.Header.Get("Authorization")
+	headerToken, herr := GetTokenFromAuthorizationHeader(authorization)
+	if herr != nil {
+		respondWithError(w, http.StatusUnauthorized, herr.Error())
+		return
 	}
-	if chirp, err := db.CreateChirp(body); err == nil {
-		respondWithJSON(w, http.StatusCreated, chirp)
-	} else {
-		respondWithError(w, 400, "unprocessable chirp")
+	token, err := internal.ValidateToken(headerToken, ctx.jwtSecret, &claims)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "unauthorized")
+	} else if db, dberr := internal.NewDB("./database.json"); dberr == nil {
+		if token.Valid {
+			userId, converr := strconv.Atoi(claims.Subject)
+			if converr == nil {
+				if user, err := db.GetUser(userId); err != nil {
+					respondWithError(w, 400, "unprocessable chirp")
+				} else if chirp, err := db.CreateChirp(body, user); err == nil {
+					respondWithJSON(w, http.StatusCreated, chirp)
+				} else {
+					respondWithError(w, 400, "unprocessable chirp")
+				}
+			}
+		}
 	}
 }
 
@@ -138,6 +158,40 @@ func getChirp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func deleteChirp(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
+	db, _ := internal.NewDB("./database.json")
+	chirpId, parseErr := strconv.Atoi(r.PathValue("chirpID"))
+	claims := internal.MyCustomClaims{}
+	authorization := r.Header.Get("Authorization")
+	headerToken, herr := GetTokenFromAuthorizationHeader(authorization)
+	if herr != nil {
+		respondWithError(w, http.StatusUnauthorized, herr.Error())
+		return
+	}
+	token, err := internal.ValidateToken(headerToken, ctx.jwtSecret, &claims)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "unauthorized")
+	} else if db, dberr := internal.NewDB("./database.json"); dberr == nil {
+		if token.Valid {
+			userId, converr := strconv.Atoi(claims.Subject)
+			if converr == nil {
+				if deleted := db.DeleteChirp(chirpId, userId); deleted {
+					respondWithNoContent(w, http.StatusNoContent)
+				} else {
+					respondWithError(w, 403, "forbidden")
+				}
+			}
+		}
+	}
+	if parseErr != nil {
+		respondWithError(w, 404, "not found")
+	} else if chirp, err := db.GetChirp(chirpId); err == nil {
+		respondWithJSON(w, http.StatusOK, chirp)
+	} else {
+		respondWithError(w, 404, "not found")
+	}
+}
+
 func GetTokenFromAuthorizationHeader(header string) (string, error) {
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) {
@@ -154,19 +208,14 @@ func updateUser(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 		respondWithError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	claims := MyCustomClaims{}
+	claims := internal.MyCustomClaims{}
 	authorization := r.Header.Get("Authorization")
 	headerToken, herr := GetTokenFromAuthorizationHeader(authorization)
 	if herr != nil {
 		respondWithError(w, http.StatusUnauthorized, herr.Error())
 		return
 	}
-	token, err := jwt.ParseWithClaims(headerToken, &claims, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("theres a problem with the signing method")
-		}
-		return ctx.jwtSecret, nil
-	})
+	token, err := internal.ValidateToken(headerToken, ctx.jwtSecret, &claims)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "unauthorized")
 	} else if db, dberr := internal.NewDB("./database.json"); dberr == nil {
@@ -321,9 +370,14 @@ func main() {
 	r.HandleFunc("PUT /api/users", func(w http.ResponseWriter, r *http.Request) {
 		updateUser(w, r, &apiConfig)
 	})
-	r.HandleFunc("POST /api/chirps", createChirp)
+	r.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		createChirp(w, r, &apiConfig)
+	})
 	r.HandleFunc("GET /api/chirps", getChirps)
 	r.HandleFunc("GET /api/chirps/{chirpID}", getChirp)
+	r.HandleFunc("DELETE /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		deleteChirp(w, r, &apiConfig)
+	})
 	r.Handle("/admin/", http.StripPrefix("/app", admin))
 	// Wrp the mux in a custom middleware for CORS
 	corsMux := addCorsHeaders(r)

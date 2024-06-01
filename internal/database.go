@@ -28,8 +28,9 @@ type DBStructure struct {
 }
 
 type User struct {
-	Email string `json:"email"`
-	Id    int    `json:"id"`
+	Email       string `json:"email"`
+	Id          int    `json:"id"`
+	IsChirpyRed bool   `json:"is_chirpy_red"`
 }
 
 // NewDB creates a new database connection
@@ -111,6 +112,22 @@ func (db *DB) GetUser(userId int) (User, error) {
 	}
 }
 
+func (db *DB) UpgradeUserRed(userId int, red bool) bool {
+	if dbStructure, err := db.loadDB(); err == nil {
+		if user, ok := dbStructure.Users[userId]; ok {
+			user.IsChirpyRed = red
+			dbStructure.Users[userId] = user
+
+			db.writeDB(dbStructure)
+			return true
+		} else {
+			return false
+		}
+	} else {
+		return false
+	}
+}
+
 func (db *DB) UpdateUser(userId int, email string, password []byte) (User, error) {
 	newUser := User{Email: email, Id: userId}
 	var erred error
@@ -136,7 +153,7 @@ func (db *DB) UpdateUser(userId int, email string, password []byte) (User, error
 
 func (db *DB) CreateUser(email string, password []byte) (User, error) {
 	pw, _ := bcrypt.GenerateFromPassword(password, 10)
-	newUser := User{Email: email, Id: -1}
+	newUser := User{Email: email, Id: -1, IsChirpyRed: false}
 	if dbStructure, err := db.loadDB(); err == nil {
 		for i := range dbStructure.Users {
 			if _, ok := dbStructure.Users[i]; !ok {

@@ -22,8 +22,15 @@ import (
 type apiConfig struct {
 	fileServerHits int
 	jwtSecret      []byte
+	polkaKey       string
 }
 
+type WebooksParams struct {
+	Event string `json:"event"`
+	Data  struct {
+		UserId int `json:"user_id"`
+	} `json:"data"`
+}
 type UserParams struct {
 	Email            string `json:"email"`
 	Password         string `json:"password"`
@@ -74,9 +81,8 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Write(dat)
 }
 
-func respondWithNoContent(w http.ResponseWriter, code int) {
-	w.WriteHeader(code)
-	w.Write(nil)
+func respondWithNoContent(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func CensorString(s string) string {
@@ -176,7 +182,7 @@ func deleteChirp(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 			userId, converr := strconv.Atoi(claims.Subject)
 			if converr == nil {
 				if deleted := db.DeleteChirp(chirpId, userId); deleted {
-					respondWithNoContent(w, http.StatusNoContent)
+					respondWithNoContent(w)
 				} else {
 					respondWithError(w, 403, "forbidden")
 				}
@@ -236,6 +242,35 @@ func updateUser(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 		}
 	} else {
 		respondWithError(w, http.StatusBadRequest, dberr.Error())
+	}
+}
+
+func handleWebhooks(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
+	header, missing := internal.ApiKeyHeader(r.Header.Get("Authorization"))
+	fmt.Println(header, ctx.polkaKey)
+	if missing != nil || header != ctx.polkaKey {
+		respondWithError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := WebooksParams{}
+	if err := decoder.Decode(&params); err != nil {
+		respondWithNoContent(w)
+	} else {
+		db, err := internal.NewDB("./database.json")
+		if err != nil {
+			panic(err)
+		}
+
+		if params.Event == "user.upgraded" {
+			if db.UpgradeUserRed(params.Data.UserId, true) {
+				respondWithNoContent(w)
+			} else {
+				respondWithError(w, http.StatusNotFound, "not found")
+			}
+		} else {
+			respondWithNoContent(w)
+		}
 	}
 }
 
@@ -311,11 +346,13 @@ func userLogin(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 		Email        string `json:"email"`
 		Token        string `json:"token"`
 		RefreshToken string `json:"refresh_token"`
+		IsChirpyRed  bool   `json:"is_chirpy_red"`
 	}{
 		Id:           user.Id,
 		Email:        user.Email,
 		Token:        ss,
 		RefreshToken: refresh,
+		IsChirpyRed:  user.IsChirpyRed,
 	}
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "unauthorized")
@@ -343,6 +380,7 @@ func main() {
 	apiConfig := apiConfig{
 		fileServerHits: 0,
 		jwtSecret:      []byte(os.Getenv("JWT_SECRET")),
+		polkaKey:       os.Getenv("POLKA_KEY"),
 	}
 	r := http.NewServeMux()
 	admin := http.NewServeMux()
@@ -361,6 +399,9 @@ func main() {
 	admin.HandleFunc("/reset", apiConfig.handlerReset)
 	r.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
 		userLogin(w, r, &apiConfig)
+	})
+	r.HandleFunc("POST /api/polka/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		handleWebhooks(w, r, &apiConfig)
 	})
 	r.HandleFunc("POST /api/users", createUser)
 	r.HandleFunc("POST /api/revoke", revokeToken)

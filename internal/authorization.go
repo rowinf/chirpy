@@ -13,6 +13,14 @@ type MyCustomClaims struct {
 	jwt.RegisteredClaims
 }
 
+func ApiKeyHeader(header string) (string, error) {
+	const prefix = "ApiKey "
+	if !strings.HasPrefix(header, prefix) {
+		return "", errors.New("unauthorized")
+	}
+	return strings.TrimSpace(strings.TrimPrefix(header, prefix)), nil
+}
+
 func AuthorizationHeader(header string) (string, error) {
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) {

@@ -137,12 +137,19 @@ func createChirp(w http.ResponseWriter, r *http.Request, ctx *apiConfig) {
 }
 
 func getChirps(w http.ResponseWriter, r *http.Request) {
-	db, err := internal.NewDB("./database.json")
-	if err != nil {
-		panic("error database")
-	}
+	db, _ := internal.NewDB("./database.json")
 
-	if chirps, err := db.GetChirps(); err == nil {
+	authorIdParam := r.URL.Query().Get("author_id")
+	aid, _ := strconv.Atoi(authorIdParam)
+
+	params := struct {
+		AuthorId int
+		Sort     string
+	}{
+		AuthorId: aid,
+		Sort:     r.URL.Query().Get("sort"),
+	}
+	if chirps, err := db.GetChirps(params); err == nil {
 		respondWithJSON(w, http.StatusOK, chirps)
 	} else {
 		respondWithError(w, 400, "unprocessable chirp")

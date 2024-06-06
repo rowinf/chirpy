@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sort"
 	"sync"
 
 	"golang.org/x/crypto/bcrypt"
@@ -90,17 +91,32 @@ func (db *DB) DeleteChirp(chirpId int, userId int) bool {
 }
 
 // GetChirps returns all chirps in the database
-func (db *DB) GetChirps() ([]Chirp, error) {
-	data, err := db.loadDB()
-	values := make([]Chirp, len(data.Chirps))
-	if err == nil {
-		i := 0
-		for _, val := range data.Chirps {
-			values[i] = val
-			i++
+func (db *DB) GetChirps(params struct {
+	AuthorId int
+	Sort     string
+},
+) ([]Chirp, error) {
+	data, _ := db.loadDB()
+	values := make([]Chirp, 0)
+	for _, val := range data.Chirps {
+		if params.AuthorId > 0 {
+			if val.AuthorId == params.AuthorId {
+				values = append(values, val)
+			}
+		} else {
+			values = append(values, val)
 		}
-		return values, nil
 	}
+	if params.Sort == "desc" {
+		sort.Slice(values, func(i, j int) bool {
+			return values[i].Id > values[j].Id
+		})
+	} else {
+		sort.Slice(values, func(i, j int) bool {
+			return values[i].Id < values[j].Id
+		})
+	}
+
 	return values, nil
 }
 

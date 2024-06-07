@@ -9,7 +9,11 @@ func TestLoadDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no db %s", err)
 	}
-	chirps, cerr := db.GetChirps()
+	params := struct {
+		AuthorId int
+		Sort     string
+	}{AuthorId: 0, Sort: ""}
+	chirps, cerr := db.GetChirps(params)
 	if cerr != nil {
 		t.Fatalf("error loading chirps %s", cerr)
 	}
@@ -24,11 +28,16 @@ func TestCreateChirp(t *testing.T) {
 		t.Fatalf("no db %s", err)
 	}
 	body := "test chirp body afwef"
-	_, cerr := db.CreateChirp(body)
+	user := User{Id: 1}
+	_, cerr := db.CreateChirp(body, user)
 	if cerr != nil {
 		t.Fatalf("couldnt create chirp: '%s'", body)
 	}
-	chirps, gerr := db.GetChirps()
+	params := struct {
+		AuthorId int
+		Sort     string
+	}{AuthorId: 0, Sort: ""}
+	chirps, gerr := db.GetChirps(params)
 	if gerr != nil {
 		t.Fatalf("couldnt get chirps %s", gerr)
 	}
@@ -36,11 +45,11 @@ func TestCreateChirp(t *testing.T) {
 		t.Fatalf("expected len: %d actual length: %d", 1, len(chirps))
 	}
 	body2 := "test chirp body uahwuef"
-	_, cerr2 := db.CreateChirp(body2)
+	_, cerr2 := db.CreateChirp(body2, user)
 	if cerr2 != nil {
 		t.Fatalf("couldnt create chirp: '%s'", body2)
 	}
-	chirps2, gerr2 := db.GetChirps()
+	chirps2, gerr2 := db.GetChirps(params)
 	if gerr2 != nil {
 		t.Fatalf("couldnt load chirps %s", gerr2)
 	}
